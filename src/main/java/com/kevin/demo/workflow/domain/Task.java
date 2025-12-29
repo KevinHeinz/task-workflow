@@ -12,7 +12,7 @@ public class Task {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // optimistic locking version field prevents conflicts during concurrent updates
+    // optimistic locking version prevents conflicts in concurrent updates
     @Version
     private Long version;
 
