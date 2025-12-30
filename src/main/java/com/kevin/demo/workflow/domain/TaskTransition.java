@@ -2,6 +2,7 @@ package com.kevin.demo.workflow.domain;
 
 import jakarta.persistence.*;
 import java.time.Instant;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 
 @Entity
 @Table(name = "task_transitions")
@@ -13,10 +14,11 @@ public class TaskTransition {
 
     @ManyToOne(optional = false, fetch = FetchType.LAZY)
     @JoinColumn(name = "task_id", nullable = false)
+    @JsonIgnore
     private Task task;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
+    @Column(name = "from_state", nullable = true)
     private TaskState fromState;
 
     @Enumerated(EnumType.STRING)
