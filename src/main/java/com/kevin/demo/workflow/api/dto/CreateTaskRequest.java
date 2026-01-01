@@ -1,6 +1,6 @@
 package com.kevin.demo.workflow.api.dto;
 
-public class CreateTaskRequest {
-    public String title;
-    public String description;
-}
+public record CreateTaskRequest(
+    String title,
+    String description
+) {}

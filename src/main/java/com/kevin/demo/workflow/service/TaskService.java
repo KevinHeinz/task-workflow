@@ -48,40 +48,32 @@ public class TaskService {
 
         requireState(task, TaskState.CREATED, "SUBMIT");
 
-        transitionRepository.save(
-            new TaskTransition(
-                task, 
-                task.getState(), 
-                TaskState.QUEUED, 
-                "SUBMIT", 
-                null
-            )
-        );
+        TaskState from = task.getState();
 
         task.setState(TaskState.QUEUED);
-        return taskRepository.save(task);
+        Task saved = taskRepository.save(task);
+
+        recordTransitionIfChanged(saved, from, "SUBMIT", null);
+
+        return saved;
     }
 
     // transition queued -> processing
     @Transactional
     public Task startProcessing(Long taskId) {
         Task task = taskRepository.findById(taskId)
-            .orElseThrow(() -> new IllegalArgumentException("Task not found: " + taskId));
+                .orElseThrow(() -> new IllegalArgumentException("Task not found: " + taskId));
 
         requireState(task, TaskState.QUEUED, "START_PROCESSING");
 
-        transitionRepository.save(
-                new TaskTransition(
-                        task,
-                        task.getState(),
-                        TaskState.PROCESSING,
-                        "START_PROCESSING",
-                        null
-                )
-        );
+        TaskState from = task.getState();
 
         task.setState(TaskState.PROCESSING);
-        return taskRepository.save(task);
+        Task saved = taskRepository.save(task);
+
+        recordTransitionIfChanged(saved, from, "START_PROCESSING", null);
+
+        return saved;
     }
 
     // transition: processing -> completed
@@ -92,18 +84,14 @@ public class TaskService {
 
         requireState(task, TaskState.PROCESSING, "COMPLETE");
 
-        transitionRepository.save(
-                new TaskTransition(
-                        task,
-                        task.getState(),
-                        TaskState.COMPLETED,
-                        "COMPLETE",
-                        null
-                )
-        );
+        TaskState from = task.getState();
 
         task.setState(TaskState.COMPLETED);
-        return taskRepository.save(task);
+        Task saved = taskRepository.save(task);
+
+        recordTransitionIfChanged(saved, from, "COMPLETE", null);
+
+        return saved;
     }
 
     // transition: processing -> failed
@@ -114,28 +102,30 @@ public class TaskService {
 
         requireState(task, TaskState.PROCESSING, "FAIL");
 
+        TaskState from = task.getState();
+
         task.setAttemptCount(task.getAttemptCount() + 1);
         task.setLastError(errorMessage);
-
-        transitionRepository.save(
-                new TaskTransition(
-                        task,
-                        task.getState(),
-                        TaskState.FAILED,
-                        "FAIL",
-                        errorMessage
-                )
-        );
-
         task.setState(TaskState.FAILED);
-        return taskRepository.save(task);
+
+        Task saved = taskRepository.save(task);
+
+        recordTransitionIfChanged(saved, from, "FAIL", errorMessage);
+
+        return saved;
     }
 
-    // transition: failed -> queued (retry) 
+    // transition: after failed -> queued (again) for retry 
     @Transactional
     public Task retry(Long taskId) {
         Task task = taskRepository.findById(taskId)
                 .orElseThrow(() -> new IllegalArgumentException("Task not found: " + taskId));
+
+        if (task.getState() == TaskState.QUEUED
+                || task.getState() == TaskState.PROCESSING
+                || task.getState() == TaskState.COMPLETED) {
+            return task;
+        }
 
         requireState(task, TaskState.FAILED, "RETRY");
 
@@ -143,18 +133,66 @@ public class TaskService {
             throw new IllegalStateException("Max attempts reached for task: " + taskId);
         }
 
+        TaskState from = task.getState();
+
+        task.setState(TaskState.QUEUED);
+        Task saved = taskRepository.save(task);
+
+        recordTransitionIfChanged(saved, from, "RETRY", null);
+
+        return saved;
+    }
+
+    @Transactional
+    public boolean claimForProcessing(Long taskId) {
+
+        int updated = taskRepository.transitionStateIfCurrent(
+                taskId,
+                TaskState.QUEUED,
+                TaskState.PROCESSING
+        );
+
+        if (updated == 0) return false;
+
+        Task task = taskRepository.findById(taskId)
+                .orElseThrow(() -> new IllegalArgumentException("Task not found: " + taskId));
+
         transitionRepository.save(
                 new TaskTransition(
                         task,
-                        task.getState(),
                         TaskState.QUEUED,
-                        "RETRY",
+                        TaskState.PROCESSING,
+                        "START_PROCESSING",
                         null
                 )
         );
 
-        task.setState(TaskState.QUEUED);
-        return taskRepository.save(task);
+        return true;
+    }
+
+    @Transactional(readOnly = true)
+    public Task get(Long id) {
+        return taskRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Task not found: " + id));
+    }
+
+    private void recordTransitionIfChanged(
+            Task task,
+            TaskState fromState,
+            String event,
+            String message
+    ) {
+        if (fromState != task.getState()) {
+            transitionRepository.save(
+                    new TaskTransition(
+                            task,
+                            fromState,
+                            task.getState(),
+                            event,
+                            message
+                    )
+            );
+        }
     }
 
     private void requireState(Task task, TaskState expected, String action) {

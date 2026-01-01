@@ -21,7 +21,7 @@ public class WorkflowScheduler {
         this.taskService = taskService;
     }
 
-    // checks every 3 seconds for queued tasks to start processing 
+    // checks every 3 seconds for QUEUED tasks to start PROCESSING 
     @Scheduled(fixedDelay = 3000)
     public void pollQueuedTasks() {
 
@@ -30,12 +30,41 @@ public class WorkflowScheduler {
 
         for (Task task : queuedTasks) {
             try {
-                taskService.startProcessing(task.getId());
-                System.out.println("[scheduler] started task id=" + task.getId());
+                boolean claimed = taskService.claimForProcessing(task.getId());
+                if (claimed) {
+                    System.out.println("[scheduler] claimed task id=" + task.getId());
+                }
             } catch (Exception e) {
-                // Expected if this task was already claimed
                 System.out.println(
                         "[scheduler] skip task id=" + task.getId()
+                        + " reason=" + e.getMessage()
+                );
+            }
+        }
+    }
+
+    // checks every 3 seconds for PROCESSING tasks. Simulates FAILED, retries, then COMPLETED  
+    @Scheduled(fixedDelay = 3000)
+    public void pollProcessingTasks() {
+
+        List<Task> processing =
+                taskRepository.findTop50ByStateOrderByUpdatedAtAsc(TaskState.PROCESSING);
+
+        for (Task task : processing) {
+            try {
+                // for observation of fail path execution
+                boolean shouldFail = task.getAttemptCount() == 0;
+
+                if (shouldFail) {
+                    taskService.fail(task.getId(), "Simulated failure on first attempt");
+                    System.out.println("[scheduler] failed task id=" + task.getId());
+                } else {
+                    taskService.complete(task.getId());
+                    System.out.println("[scheduler] completed task id=" + task.getId());
+                }
+            } catch (Exception e) {
+                System.out.println(
+                        "[scheduler] processing-skip task id=" + task.getId()
                         + " reason=" + e.getMessage()
                 );
             }

@@ -1,6 +1,4 @@
-package com.kevin.demo.workflow.api.dto;
-
-import java.util.List;
+package com.kevin.demo.workflow.api;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -11,8 +9,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.kevin.demo.workflow.api.dto.CreateTaskRequest;
+import com.kevin.demo.workflow.api.dto.FailTaskRequest;
+import com.kevin.demo.workflow.api.dto.TaskResponse;
+import com.kevin.demo.workflow.api.mapper.TaskMapper;
 import com.kevin.demo.workflow.domain.Task;
-import com.kevin.demo.workflow.domain.TaskTransition;
 import com.kevin.demo.workflow.repository.TaskRepository;
 import com.kevin.demo.workflow.repository.TaskTransitionRepository;
 import com.kevin.demo.workflow.service.TaskService;
@@ -22,37 +23,29 @@ import com.kevin.demo.workflow.service.TaskService;
 public class TaskController {
 
     private final TaskService taskService;
-    private final TaskRepository taskRepository;
-    private final TaskTransitionRepository transitionRepository;
 
     public TaskController(TaskService taskService,
                           TaskRepository taskRepository,
                           TaskTransitionRepository transitionRepository) {
         this.taskService = taskService;
-        this.taskRepository = taskRepository;
-        this.transitionRepository = transitionRepository;
     }
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public Task create(@RequestBody CreateTaskRequest req) {
-        return taskService.createTask(req.title, req.description);
+    public TaskResponse create(@RequestBody CreateTaskRequest req) {
+        return TaskMapper.toResponse(
+            taskService.createTask(req.title(), req.description())
+        );
     }
 
     @GetMapping("/{id}")
-    public Task get(@PathVariable Long id) {
-        return taskRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Task not found: " + id));
-    }
-
-    @GetMapping("/{id}/transitions")
-    public List<TaskTransition> transitions(@PathVariable Long id) {
-        return transitionRepository.findByTaskIdOrderByCreatedAtAsc(id);
+    public TaskResponse get(@PathVariable Long id) {
+        return TaskMapper.toResponse(taskService.get(id));
     }
 
     @PostMapping("/{id}/submit")
-    public Task submit(@PathVariable Long id) {
-        return taskService.submit(id);
+    public TaskResponse submit(@PathVariable Long id) {
+        return TaskMapper.toResponse(taskService.submit(id));
     }
 
     @PostMapping("/{id}/start")
@@ -66,12 +59,15 @@ public class TaskController {
     }
 
     @PostMapping("/{id}/fail")
-    public Task fail(@PathVariable Long id, @RequestBody FailTaskRequest req) {
-        return taskService.fail(id, req.message);
+    public TaskResponse fail(@PathVariable Long id,
+                            @RequestBody FailTaskRequest req) {
+        return TaskMapper.toResponse(
+                taskService.fail(id, req.message())
+        );
     }
 
     @PostMapping("/{id}/retry")
-    public Task retry(@PathVariable Long id) {
-        return taskService.retry(id);
+    public TaskResponse retry(@PathVariable Long id) {
+        return TaskMapper.toResponse(taskService.retry(id));
     }
 }
