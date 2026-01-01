@@ -1,5 +1,6 @@
 package com.kevin.demo.workflow.scheduler;
 
+import java.time.Instant;
 import java.util.List;
 
 import org.springframework.scheduling.annotation.Scheduled;
@@ -69,5 +70,42 @@ public class WorkflowScheduler {
                 );
             }
         }
+    }
+
+    // auto-retry FAILED tasks with linear backoff (15s/attempt, cap 60s) up to maxAttempts.
+    @Scheduled(fixedDelay = 5_000)
+    public void pollFailedTasks() {
+        List<Task> failed =
+            taskRepository.findTop50ByStateOrderByUpdatedAtAsc(TaskState.FAILED);
+
+        for (Task task : failed) {
+            try {
+                if (task.getAttemptCount() >= task.getMaxAttempts()) {
+                    continue; // give up
+                }
+
+                if (!readyToRetry(task)) {
+                    continue; // wait longer
+                }
+
+                taskService.retry(task.getId());
+                System.out.println("[scheduler] auto-retry task id=" + task.getId());
+
+            } catch (Exception e) {
+                System.out.println("[scheduler] retry-skip task id=" + task.getId()
+                        + " reason=" + e.getMessage());
+            }
+        }
+    }
+
+    private boolean readyToRetry(Task task) {
+        int attempt = task.getAttemptCount();
+
+        // 15 seconds per attempt, max 60 seconds
+        int delaySeconds = Math.min(attempt * 15, 60);
+
+        return task.getUpdatedAt()
+                .plusSeconds(delaySeconds)
+                .isBefore(Instant.now());
     }
 }
