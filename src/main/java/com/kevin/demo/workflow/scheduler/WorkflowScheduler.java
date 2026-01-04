@@ -3,6 +3,8 @@ package com.kevin.demo.workflow.scheduler;
 import java.time.Instant;
 import java.util.List;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -14,6 +16,9 @@ import com.kevin.demo.workflow.service.TaskService;
 @Component
 public class WorkflowScheduler {
 
+    private static final Logger log =
+            LoggerFactory.getLogger(WorkflowScheduler.class);
+
     private final TaskRepository taskRepository;
     private final TaskService taskService;
 
@@ -22,90 +27,135 @@ public class WorkflowScheduler {
         this.taskService = taskService;
     }
 
-    // checks every 3 seconds for QUEUED tasks to start PROCESSING 
+    // check QUEUED tasks and attempt to claim them for PROCESSING
     @Scheduled(fixedDelay = 3000)
     public void pollQueuedTasks() {
 
         List<Task> queuedTasks =
                 taskRepository.findTop50ByStateOrderByUpdatedAtAsc(TaskState.QUEUED);
 
+        if (queuedTasks.isEmpty()) {
+            log.debug("poll_queued empty");
+            return;
+        }
+
+        int claimedCount = 0;
+        log.debug("poll_queued start count={}", queuedTasks.size());
+
         for (Task task : queuedTasks) {
             try {
                 boolean claimed = taskService.claimForProcessing(task.getId());
                 if (claimed) {
-                    System.out.println("[scheduler] claimed task id=" + task.getId());
+                    claimedCount++;
+                    log.info("task_claimed taskId={}", task.getId());
                 }
+            } catch (IllegalStateException e) {
+                // Expected occasionally (races / invalid state by the time we touch it)
+                log.warn("task_claim_skip taskId={} reason={}", task.getId(), e.getMessage());
             } catch (Exception e) {
-                System.out.println(
-                        "[scheduler] skip task id=" + task.getId()
-                        + " reason=" + e.getMessage()
-                );
+                // Unexpected
+                log.error("task_claim_error taskId={}", task.getId(), e);
             }
         }
+
+        log.info("poll_queued end scanned={} claimed={}", queuedTasks.size(), claimedCount);
     }
 
-    // checks every 3 seconds for PROCESSING tasks. Simulates FAILED, retries, then COMPLETED  
+    // check PROCESSING tasks and simulate fail first attempt, then complete
     @Scheduled(fixedDelay = 3000)
     public void pollProcessingTasks() {
 
         List<Task> processing =
                 taskRepository.findTop50ByStateOrderByUpdatedAtAsc(TaskState.PROCESSING);
 
+        if (processing.isEmpty()) {
+            log.debug("poll_processing empty");
+            return;
+        }
+
+        int failedCount = 0;
+        int completedCount = 0;
+        log.debug("poll_processing start count={}", processing.size());
+
         for (Task task : processing) {
             try {
-                // for observation of fail path execution
+                // Simulate: first attempt fails, next attempt completes
                 boolean shouldFail = task.getAttemptCount() == 0;
 
                 if (shouldFail) {
                     taskService.fail(task.getId(), "Simulated failure on first attempt");
-                    System.out.println("[scheduler] failed task id=" + task.getId());
+                    failedCount++;
+                    log.info("task_failed taskId={} attempt={}", task.getId(), task.getAttemptCount());
                 } else {
                     taskService.complete(task.getId());
-                    System.out.println("[scheduler] completed task id=" + task.getId());
+                    completedCount++;
+                    log.info("task_completed taskId={} attempt={}", task.getId(), task.getAttemptCount());
                 }
+            } catch (IllegalStateException e) {
+                log.warn("task_processing_skip taskId={} reason={}", task.getId(), e.getMessage());
             } catch (Exception e) {
-                System.out.println(
-                        "[scheduler] processing-skip task id=" + task.getId()
-                        + " reason=" + e.getMessage()
-                );
+                log.error("task_processing_error taskId={}", task.getId(), e);
             }
         }
+
+        log.info("poll_processing end scanned={} failed={} completed={}",
+                processing.size(), failedCount, completedCount);
     }
 
-    // auto-retry FAILED tasks with linear backoff (15s/attempt, cap 60s) up to maxAttempts.
+    // check FAILED tasks and auto-retry with backoff (15s/attempt, cap 60s) up to maxAttempts
     @Scheduled(fixedDelay = 5_000)
     public void pollFailedTasks() {
+
         List<Task> failed =
-            taskRepository.findTop50ByStateOrderByUpdatedAtAsc(TaskState.FAILED);
+                taskRepository.findTop50ByStateOrderByUpdatedAtAsc(TaskState.FAILED);
+
+        if (failed.isEmpty()) {
+            log.debug("poll_failed empty");
+            return;
+        }
+
+        int retriedCount = 0;
+        int waitingCount = 0;
+        log.debug("poll_failed start count={}", failed.size());
 
         for (Task task : failed) {
             try {
                 if (task.getAttemptCount() >= task.getMaxAttempts()) {
-                    continue; // give up
+                    log.warn("task_retry_giveup taskId={} attempt={} maxAttempts={}",
+                            task.getId(), task.getAttemptCount(), task.getMaxAttempts());
+                    continue;
                 }
 
                 if (!readyToRetry(task)) {
-                    continue; // wait longer
+                    waitingCount++;
+                    log.debug("task_retry_wait taskId={} attempt={} nextDelaySec={}",
+                            task.getId(), task.getAttemptCount(), computeDelaySeconds(task.getAttemptCount()));
+                    continue;
                 }
 
                 taskService.retry(task.getId());
-                System.out.println("[scheduler] auto-retry task id=" + task.getId());
-
+                retriedCount++;
+                log.info("task_retried taskId={} attempt={}", task.getId(), task.getAttemptCount());
+            } catch (IllegalStateException e) {
+                log.warn("task_retry_skip taskId={} reason={}", task.getId(), e.getMessage());
             } catch (Exception e) {
-                System.out.println("[scheduler] retry-skip task id=" + task.getId()
-                        + " reason=" + e.getMessage());
+                log.error("task_retry_error taskId={}", task.getId(), e);
             }
         }
+
+        log.info("poll_failed end scanned={} retried={} waiting={}",
+                failed.size(), retriedCount, waitingCount);
     }
 
     private boolean readyToRetry(Task task) {
-        int attempt = task.getAttemptCount();
-
-        // 15 seconds per attempt, max 60 seconds
-        int delaySeconds = Math.min(attempt * 15, 60);
-
+        int delaySeconds = computeDelaySeconds(task.getAttemptCount());
         return task.getUpdatedAt()
                 .plusSeconds(delaySeconds)
                 .isBefore(Instant.now());
+    }
+
+    private int computeDelaySeconds(int attemptCount) {
+        // 15 seconds per attempt, max 60 seconds
+        return Math.min(attemptCount * 15, 60);
     }
 }
