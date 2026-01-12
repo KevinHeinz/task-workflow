@@ -28,7 +28,7 @@ public class WorkflowScheduler {
     }
 
     // check QUEUED tasks and attempt to claim them for PROCESSING
-    @Scheduled(fixedDelay = 3000)
+    @Scheduled(fixedDelay = 3_000)
     public void pollQueuedTasks() {
 
         List<Task> queuedTasks =
@@ -36,6 +36,7 @@ public class WorkflowScheduler {
 
         if (queuedTasks.isEmpty()) {
             log.debug("poll_queued empty");
+
             return;
         }
 
@@ -62,7 +63,7 @@ public class WorkflowScheduler {
     }
 
     // check PROCESSING tasks and simulate fail first attempt, then complete
-    @Scheduled(fixedDelay = 3000)
+    @Scheduled(fixedDelay = 1_500_000)
     public void pollProcessingTasks() {
 
         List<Task> processing =
@@ -157,5 +158,29 @@ public class WorkflowScheduler {
     private int computeDelaySeconds(int attemptCount) {
         // 15 seconds per attempt, max 60 seconds
         return Math.min(attemptCount * 15, 60);
+    }
+
+    @Scheduled(fixedDelay = 10_000)
+    public void pollStaleProcessingTasks() {
+
+        // handles PROCESSING tasks as stale if not updated for 10 minutes
+        Instant cutoff = Instant.now().minusSeconds(600);
+
+        List<Task> processing =
+                taskRepository.findTop50ByStateOrderByUpdatedAtAsc(TaskState.PROCESSING);
+
+        for (Task task : processing) {
+
+            // stops when hits a non-stale task due to ascending order
+            if (!task.getUpdatedAt().isBefore(cutoff)) {
+                break;
+            }
+
+            try {
+                taskService.timeoutProcessingIfStale(task.getId(), cutoff);
+            } catch (Exception e) {
+                log.warn("task_timeout_error taskId={}", task.getId(), e);
+            }
+        }
     }
 }

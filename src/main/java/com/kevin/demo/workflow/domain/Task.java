@@ -2,6 +2,8 @@ package com.kevin.demo.workflow.domain;
 
 import java.time.Instant;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 import jakarta.persistence.*;
 
 @Entity
@@ -14,6 +16,7 @@ public class Task {
 
     // optimistic locking version prevents conflicts in concurrent updates
     @Version
+    @JsonIgnore
     private Long version;
 
     @Enumerated(jakarta.persistence.EnumType.STRING)
@@ -56,11 +59,6 @@ public class Task {
         this.updatedAt = now;
     }
 
-    @PreUpdate
-    void preUpdate() {
-        this.updatedAt = Instant.now();
-    }
-
     // Getters and setters  
     public Long getId() {
         return id;
@@ -69,11 +67,18 @@ public class Task {
         return version;
     }
 
+    public void setVersion(Long version) { 
+        this.version = version; 
+    }
+
     public TaskState getState() {
         return state;
     }
-    public void setState(TaskState state) {
-        this.state = state;
+    public void setState(TaskState newState) {
+        if (newState != this.state) {
+            this.state = newState;
+            this.updatedAt = Instant.now();
+        }
     }
 
     public String getTitle() {

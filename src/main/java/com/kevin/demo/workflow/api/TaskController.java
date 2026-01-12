@@ -13,7 +13,6 @@ import com.kevin.demo.workflow.api.dto.CreateTaskRequest;
 import com.kevin.demo.workflow.api.dto.FailTaskRequest;
 import com.kevin.demo.workflow.api.dto.TaskResponse;
 import com.kevin.demo.workflow.api.mapper.TaskMapper;
-import com.kevin.demo.workflow.domain.Task;
 import com.kevin.demo.workflow.repository.TaskRepository;
 import com.kevin.demo.workflow.repository.TaskTransitionRepository;
 import com.kevin.demo.workflow.service.TaskService;
@@ -48,14 +47,22 @@ public class TaskController {
         return TaskMapper.toResponse(taskService.submit(id));
     }
 
-    @PostMapping("/{id}/start")
-    public Task start(@PathVariable Long id) {
-        return taskService.startProcessing(id);
+    @PostMapping("/{id}/claim")
+    public TaskResponse claim(@PathVariable Long id) {
+        boolean claimed = taskService.claimForProcessing(id);
+
+        if (!claimed) {
+            throw new IllegalStateException(
+                    "Task already claimed or not in QUEUED state: " + id
+            );
+        }
+
+        return TaskMapper.toResponse(taskService.get(id));
     }
 
     @PostMapping("/{id}/complete")
-    public Task complete(@PathVariable Long id) {
-        return taskService.complete(id);
+    public TaskResponse complete(@PathVariable Long id) {
+        return TaskMapper.toResponse(taskService.complete(id));
     }
 
     @PostMapping("/{id}/fail")

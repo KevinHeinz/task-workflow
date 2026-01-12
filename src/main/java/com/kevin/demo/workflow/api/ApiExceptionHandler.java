@@ -2,15 +2,19 @@ package com.kevin.demo.workflow.api;
 
 import com.kevin.demo.workflow.api.dto.ApiError;
 import jakarta.servlet.http.HttpServletRequest;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(ApiExceptionHandler.class);
 
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ApiError> handleIllegalArgument(
@@ -35,8 +39,8 @@ public class ApiExceptionHandler {
             Exception ex,
             HttpServletRequest request
     ) {
-        // fallback
-        return build(HttpStatus.INTERNAL_SERVER_ERROR, "Unexpected error", request);
+        log.error("Unhandled exception path={}", request.getRequestURI(), ex);
+        return build(HttpStatus.INTERNAL_SERVER_ERROR, ex.getMessage(), request);
     }
 
     private ResponseEntity<ApiError> build(

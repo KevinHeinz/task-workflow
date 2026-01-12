@@ -1,5 +1,7 @@
 package com.kevin.demo.workflow.service;
 
+import java.time.Instant;
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -58,22 +60,31 @@ public class TaskService {
         return saved;
     }
 
-    // transition queued -> processing
     @Transactional
-    public Task startProcessing(Long taskId) {
+    public boolean claimForProcessing(Long taskId) {
+
+        int updated = taskRepository.transitionStateIfCurrent(
+                taskId,
+                TaskState.QUEUED,
+                TaskState.PROCESSING
+        );
+
+        if (updated == 0) return false;
+
         Task task = taskRepository.findById(taskId)
                 .orElseThrow(() -> new IllegalArgumentException("Task not found: " + taskId));
 
-        requireState(task, TaskState.QUEUED, "START_PROCESSING");
+        transitionRepository.save(
+                new TaskTransition(
+                        task,
+                        TaskState.QUEUED,
+                        TaskState.PROCESSING,
+                        "START_PROCESSING",
+                        null
+                )
+        );
 
-        TaskState from = task.getState();
-
-        task.setState(TaskState.PROCESSING);
-        Task saved = taskRepository.save(task);
-
-        recordTransitionIfChanged(saved, from, "START_PROCESSING", null);
-
-        return saved;
+        return true;
     }
 
     // transition: processing -> completed
@@ -136,38 +147,12 @@ public class TaskService {
         TaskState from = task.getState();
 
         task.setState(TaskState.QUEUED);
+        task.setLastError(null);
         Task saved = taskRepository.save(task);
 
         recordTransitionIfChanged(saved, from, "RETRY", null);
 
         return saved;
-    }
-
-    @Transactional
-    public boolean claimForProcessing(Long taskId) {
-
-        int updated = taskRepository.transitionStateIfCurrent(
-                taskId,
-                TaskState.QUEUED,
-                TaskState.PROCESSING
-        );
-
-        if (updated == 0) return false;
-
-        Task task = taskRepository.findById(taskId)
-                .orElseThrow(() -> new IllegalArgumentException("Task not found: " + taskId));
-
-        transitionRepository.save(
-                new TaskTransition(
-                        task,
-                        TaskState.QUEUED,
-                        TaskState.PROCESSING,
-                        "START_PROCESSING",
-                        null
-                )
-        );
-
-        return true;
     }
 
     @Transactional(readOnly = true)
@@ -204,5 +189,34 @@ public class TaskService {
                     " taskId=" + task.getId()
             );
         }
+    }
+
+    @Transactional
+    public boolean timeoutProcessingIfStale(Long taskId, Instant cutoff) {
+
+        int updated = taskRepository.transitionStateIfCurrentAndStale(
+                taskId,
+                TaskState.PROCESSING,
+                TaskState.FAILED,
+                cutoff,
+                "PROCESSING_TIMEOUT"
+        );
+
+        if (updated == 0) return false;
+
+        Task task = taskRepository.findById(taskId)
+                .orElseThrow(() -> new IllegalArgumentException("Task not found: " + taskId));
+
+        transitionRepository.save(
+                new TaskTransition(
+                        task,
+                        TaskState.PROCESSING,
+                        TaskState.FAILED,
+                        "TIMEOUT",
+                        null
+                )
+        );
+
+        return true;
     }
 }
