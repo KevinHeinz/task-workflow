@@ -103,6 +103,30 @@ public class WorkflowScheduler {
                 processing.size(), failedCount, completedCount);
     }
 
+    @Scheduled(fixedDelay = 10_000)
+    public void pollStaleProcessingTasks() {
+
+        // handles PROCESSING tasks as stale if not updated for 10 minutes
+        Instant cutoff = Instant.now().minusSeconds(600);
+
+        List<Task> processing =
+                taskRepository.findTop50ByStateOrderByUpdatedAtAsc(TaskState.PROCESSING);
+
+        for (Task task : processing) {
+
+            // stops when hits a non-stale task due to ascending order
+            if (!task.getUpdatedAt().isBefore(cutoff)) {
+                break;
+            }
+
+            try {
+                taskService.timeoutProcessingIfStale(task.getId(), cutoff);
+            } catch (Exception e) {
+                log.warn("task_timeout_error taskId={}", task.getId(), e);
+            }
+        }
+    }
+
     // check FAILED tasks and auto-retry with backoff (15s/attempt, cap 60s) up to maxAttempts
     @Scheduled(fixedDelay = 5_000)
     public void pollFailedTasks() {
@@ -158,29 +182,5 @@ public class WorkflowScheduler {
     private int computeDelaySeconds(int attemptCount) {
         // 15 seconds per attempt, max 60 seconds
         return Math.min(attemptCount * 15, 60);
-    }
-
-    @Scheduled(fixedDelay = 10_000)
-    public void pollStaleProcessingTasks() {
-
-        // handles PROCESSING tasks as stale if not updated for 10 minutes
-        Instant cutoff = Instant.now().minusSeconds(600);
-
-        List<Task> processing =
-                taskRepository.findTop50ByStateOrderByUpdatedAtAsc(TaskState.PROCESSING);
-
-        for (Task task : processing) {
-
-            // stops when hits a non-stale task due to ascending order
-            if (!task.getUpdatedAt().isBefore(cutoff)) {
-                break;
-            }
-
-            try {
-                taskService.timeoutProcessingIfStale(task.getId(), cutoff);
-            } catch (Exception e) {
-                log.warn("task_timeout_error taskId={}", task.getId(), e);
-            }
-        }
     }
 }

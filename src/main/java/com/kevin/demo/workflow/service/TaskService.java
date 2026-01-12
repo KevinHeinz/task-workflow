@@ -60,6 +60,7 @@ public class TaskService {
         return saved;
     }
 
+    // transition: queued -> processing 
     @Transactional
     public boolean claimForProcessing(Long taskId) {
 
