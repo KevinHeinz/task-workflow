@@ -180,7 +180,7 @@ public class WorkflowScheduler {
     }
 
     private int computeDelaySeconds(int attemptCount) {
-        // 15 seconds per attempt, max 60 seconds
-        return Math.min(attemptCount * 15, 60);
+        // 15 seconds per attempt, max 180 seconds
+        return Math.min(attemptCount * 15, 180);
     }
 }
